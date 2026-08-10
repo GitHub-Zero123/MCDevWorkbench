@@ -1,3 +1,6 @@
 [submodule "third_party/MCDevLink"]
 	path = third_party/MCDevLink
 	url = https://github.com/GitHub-Zero123/MCDevLink.git
+[submodule "third_party/EUI-NEO"]
+	path = third_party/EUI-NEO
+	url = https://github.com/sudoevolve/EUI-NEO.git

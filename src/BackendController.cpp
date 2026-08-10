@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstdio>
 #include <utility>
 
 namespace mcdev {
@@ -46,31 +45,6 @@ MCDevLink::LogLevel inferLevel(const MCDevLink::LogLevel level, std::string_view
         return MCDevLink::LogLevel::info;
     }
     return MCDevLink::LogLevel::unknown;
-}
-
-std::string formatTimestamp(const std::chrono::system_clock::time_point time) {
-    const auto resolved = time == std::chrono::system_clock::time_point{}
-        ? std::chrono::system_clock::now()
-        : time;
-    const auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(resolved);
-    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(resolved - seconds);
-    const std::time_t rawTime = std::chrono::system_clock::to_time_t(resolved);
-    std::tm local{};
-#if defined(_WIN32)
-    localtime_s(&local, &rawTime);
-#else
-    localtime_r(&rawTime, &local);
-#endif
-    char buffer[20] = {};
-    std::snprintf(
-        buffer,
-        sizeof(buffer),
-        "%02d:%02d:%02d.%03d",
-        local.tm_hour,
-        local.tm_min,
-        local.tm_sec,
-        static_cast<int>(milliseconds.count()));
-    return buffer;
 }
 
 std::string normalizeLine(std::string line) {
@@ -143,6 +117,7 @@ void BackendController::poll() {
 void BackendController::clearLogs() {
     logs_.clear();
     partialLines_.clear();
+    maximumMessageBytes_ = 0;
     for (auto& session : sessions_) {
         session.logCount = 0;
     }
@@ -184,6 +159,10 @@ std::size_t BackendController::readySessionCount() const noexcept {
         }));
 }
 
+std::size_t BackendController::maximumMessageBytes() const noexcept {
+    return maximumMessageBytes_;
+}
+
 const SessionSummary* BackendController::findSession(const MCDevLink::SessionId id) const noexcept {
     const auto found = std::find_if(
         sessions_.begin(), sessions_.end(), [id](const SessionSummary& session) {
@@ -215,7 +194,7 @@ const std::vector<std::size_t>& BackendController::filteredLogIndices(
         if (!matchesFilter(line.level, filter)) {
             continue;
         }
-        if (!containsIgnoreCase(line.message, query) && !containsIgnoreCase(line.source, query)) {
+        if (!containsIgnoreCase(line.message, query)) {
             continue;
         }
         filterCache_.indices.push_back(index);
@@ -225,9 +204,7 @@ const std::vector<std::size_t>& BackendController::filteredLogIndices(
 
 void BackendController::consumeLog(const MCDevLink::LogEvent& event) {
     PartialLine& partial = partialLines_[event.sessionId];
-    partial.source = event.source;
     partial.level = event.level;
-    partial.time = event.time;
     partial.residual += event.message;
 
     std::size_t newline = 0;
@@ -310,12 +287,12 @@ void BackendController::appendLine(
     std::string line) {
     trimLogsIfNeeded();
     const MCDevLink::LogLevel level = inferLevel(partial.level, line);
+    std::string message = normalizeLine(std::move(line));
+    maximumMessageBytes_ = std::max(maximumMessageBytes_, message.size());
     logs_.push_back({
         sessionId,
         level,
-        formatTimestamp(partial.time),
-        partial.source.empty() ? "Safaia" : partial.source,
-        normalizeLine(std::move(line)),
+        std::move(message),
     });
     if (auto* session = const_cast<SessionSummary*>(findSession(sessionId))) {
         ++session->logCount;
@@ -329,6 +306,10 @@ void BackendController::trimLogsIfNeeded() {
     }
     const std::size_t eraseCount = std::min(kLogTrimBatch, logs_.size());
     logs_.erase(logs_.begin(), logs_.begin() + static_cast<std::ptrdiff_t>(eraseCount));
+    maximumMessageBytes_ = 0;
+    for (const LogLine& line : logs_) {
+        maximumMessageBytes_ = std::max(maximumMessageBytes_, line.message.size());
+    }
 }
 
 } // namespace mcdev

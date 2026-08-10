@@ -4,7 +4,6 @@
 #include <MCDevLink/Protocol/Safaia.hpp>
 #include <MCDevLink/Runtime.hpp>
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -24,8 +23,6 @@ enum class LogFilter {
 struct LogLine {
     MCDevLink::SessionId sessionId = 0;
     MCDevLink::LogLevel level = MCDevLink::LogLevel::unknown;
-    std::string timestamp;
-    std::string source;
     std::string message;
 };
 
@@ -58,6 +55,7 @@ public:
     [[nodiscard]] const std::vector<LogLine>& logs() const noexcept;
     [[nodiscard]] std::size_t revision() const noexcept;
     [[nodiscard]] std::size_t readySessionCount() const noexcept;
+    [[nodiscard]] std::size_t maximumMessageBytes() const noexcept;
 
     [[nodiscard]] const SessionSummary* findSession(MCDevLink::SessionId id) const noexcept;
     [[nodiscard]] const std::vector<std::size_t>& filteredLogIndices(
@@ -68,9 +66,7 @@ public:
 private:
     struct PartialLine {
         std::string residual;
-        std::string source;
         MCDevLink::LogLevel level = MCDevLink::LogLevel::unknown;
-        std::chrono::system_clock::time_point time{};
     };
 
     struct FilterCache {
@@ -97,6 +93,7 @@ private:
     std::vector<SessionSummary> sessions_;
     std::vector<LogLine> logs_;
     std::unordered_map<MCDevLink::SessionId, PartialLine> partialLines_;
+    std::size_t maximumMessageBytes_ = 0;
     std::size_t revision_ = 0;
     FilterCache filterCache_;
 };

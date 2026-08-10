@@ -75,3 +75,6 @@ Desktop.ini
 *.swp
 *.tmp
 *~
+
+/.mcdev
+/.mcdev.json

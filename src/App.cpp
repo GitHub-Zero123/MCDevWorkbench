@@ -41,6 +41,9 @@ constexpr float kLogRowHeight = 40.0f;
 constexpr float kHorizontalScrollHeight = 16.0f;
 constexpr float kLogLeft = 22.0f;
 constexpr float kLevelColumnWidth = 60.0f;
+constexpr float kEstimatedLogByteWidth = 8.25f;
+constexpr float kLogSliceOverscan = 256.0f;
+constexpr std::size_t kMaximumRenderedLogBytes = 4096;
 constexpr float kSidebarMinimumWidth = 188.0f;
 constexpr float kSidebarMaximumWidth = 320.0f;
 constexpr float kMainMinimumWidth = 640.0f;
@@ -563,6 +566,48 @@ void composeLogCell(
         "monospace");
 }
 
+struct RenderedLogSlice {
+    std::string text;
+    float x = 0.0f;
+    float width = 0.0f;
+};
+
+bool isUtf8ContinuationByte(const char value) {
+    return (static_cast<unsigned char>(value) & 0xc0u) == 0x80u;
+}
+
+RenderedLogSlice sliceLogMessage(
+    const std::string& message,
+    const float horizontalOffset,
+    const float viewportWidth) {
+    const float firstVisiblePixel = std::max(0.0f, horizontalOffset - kLogSliceOverscan);
+    std::size_t begin = std::min(
+        message.size(),
+        static_cast<std::size_t>(firstVisiblePixel / kEstimatedLogByteWidth));
+    while (begin < message.size() && isUtf8ContinuationByte(message[begin])) {
+        ++begin;
+    }
+    if (begin >= message.size()) {
+        return {{}, 0.0f, viewportWidth};
+    }
+
+    const std::size_t viewportBytes = static_cast<std::size_t>(
+        (std::max(0.0f, viewportWidth) + 2.0f * kLogSliceOverscan)
+        / kEstimatedLogByteWidth) + 4;
+    const std::size_t renderedBytes = std::min(kMaximumRenderedLogBytes, viewportBytes);
+    std::size_t end = std::min(message.size(), begin + renderedBytes);
+    while (end > begin && end < message.size() && isUtf8ContinuationByte(message[end])) {
+        --end;
+    }
+
+    const float x = static_cast<float>(begin) * kEstimatedLogByteWidth - horizontalOffset;
+    return {
+        message.substr(begin, end - begin),
+        x,
+        std::max(0.0f, viewportWidth - x + kLogSliceOverscan),
+    };
+}
+
 void composeLogRow(
     eui::Ui& ui,
     const std::string& rowId,
@@ -591,6 +636,8 @@ void composeLogRow(
         std::max(0.0f, messageContentWidth - messageViewportWidth));
 
     const LogVisualStyle visual = logVisualStyle(line, visibleIndex % 2 != 0);
+    const RenderedLogSlice messageSlice =
+        sliceLogMessage(line.message, horizontalOffset, messageViewportWidth);
     ui.rect(rowId + ".background").size(width, height).color(visual.background).build();
     ui.rect(rowId + ".border")
         .position(0.0f, height - 1.0f)
@@ -615,10 +662,10 @@ void composeLogRow(
             clippedText(
                 ui,
                 rowId + ".message",
-                line.message,
-                -horizontalOffset,
+                messageSlice.text,
+                messageSlice.x,
                 0.0f,
-                messageContentWidth,
+                messageSlice.width,
                 kLogRowHeight,
                 13.5f,
                 visual.message,

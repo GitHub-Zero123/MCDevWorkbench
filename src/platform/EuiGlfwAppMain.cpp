@@ -217,6 +217,12 @@ void waitForNextFrame(GLFWwindow* window, const WindowState& windowState) {
     }
 }
 
+void finishPendingResizeGraphicsWork() {
+#if defined(EUI_RENDER_BACKEND_OPENGL)
+    glFinish();
+#endif
+}
+
 void hideWindowToTray(GLFWwindow* window, WindowState& windowState, core::render::RenderBackend& renderBackend) {
     if (!windowState.trayAvailable || windowState.hiddenToTray) {
         return;
@@ -369,6 +375,7 @@ bool updateManagedWindow(ManagedWindow& managed, float deltaSeconds, bool update
     }
 
     managed.renderBackend->makeCurrent();
+    core::render::ScopedRenderBackend scopedRenderBackend(*managed.renderBackend);
 
     managed.state.iconified = glfwGetWindowAttrib(managed.window, GLFW_ICONIFIED) == GLFW_TRUE;
     if (managed.state.iconified) {
@@ -547,6 +554,8 @@ int main() {
         const float pointerScale = getPointerScale(window);
         const bool mainInputEnabled = windowState.modalChildWindow == nullptr;
 
+        renderBackend->makeCurrent();
+        core::render::ScopedRenderBackend scopedRenderBackend(*renderBackend);
         mainWindowRuntime.runFrame(
             window,
             *renderBackend,
@@ -641,14 +650,12 @@ int main() {
         }
 
         if (windowState.deferredFullPaintFrames > 0) {
-            if (windowState.deferredFullPaintFrames == 2) {
-                renderBackend->releaseRenderCache();
-            }
             windowState.paintRequested = true;
             windowState.nextFrameTime = glfwGetTime();
             app::detail::requestFullPaint();
         }
 
+        const bool finishResizeGraphics = windowState.deferredFullPaintFrames == 2;
         if (!runMainWindowFrame(glfwGetTime())) {
             renderBackend->releaseRenderCache();
             windowState.paintRequested = true;
@@ -659,6 +666,9 @@ int main() {
             continue;
         }
 
+        if (finishResizeGraphics) {
+            finishPendingResizeGraphicsWork();
+        }
         if (windowState.deferredFullPaintFrames > 0) {
             --windowState.deferredFullPaintFrames;
         }

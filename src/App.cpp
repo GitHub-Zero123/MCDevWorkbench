@@ -12,24 +12,35 @@
 namespace app {
 
 const DslAppConfig& dslAppConfig() {
-    static const DslAppConfig config = DslAppConfig{}
-        .title("MCDev Workbench")
-        .pageId("mcdev_workbench")
-        .clearColor({0.055f, 0.055f, 0.055f, 1.0f})
-        .windowSize(1400, 880)
-        .showDebugStatsInTitle(false)
-        .fps(90.0)
-        .iconPath("");
+    static const DslAppConfig config = [] {
+        const mcdev::platform::WindowSize size =
+            mcdev::platform::initialWindowSize(1400, 880);
+        DslAppConfig result = DslAppConfig{}
+            .title("MCDev Workbench")
+            .pageId("mcdev_workbench")
+            .clearColor({0.055f, 0.055f, 0.055f, 1.0f})
+            .windowSize(size.width, size.height)
+            .showDebugStatsInTitle(false)
+            .fps(60.0)
+            .iconPath("");
+        if (const std::string font = mcdev::platform::preferredUiFont(); !font.empty()) {
+            result.textFont(font);
+        }
+        return result;
+    }();
     return config;
 }
 
 namespace {
 
-constexpr float kHeaderHeight = 78.0f;
-constexpr float kToolbarHeight = 64.0f;
-constexpr float kColumnHeaderHeight = 34.0f;
-constexpr float kFooterHeight = 32.0f;
-constexpr float kLogRowHeight = 34.0f;
+constexpr float kHeaderHeight = 86.0f;
+constexpr float kToolbarHeight = 70.0f;
+constexpr float kColumnHeaderHeight = 38.0f;
+constexpr float kFooterHeight = 36.0f;
+constexpr float kLogRowHeight = 40.0f;
+constexpr float kLogLeft = 22.0f;
+constexpr float kTimeColumnWidth = 112.0f;
+constexpr float kLevelColumnWidth = 82.0f;
 
 const eui::Color kCanvas{0.055f, 0.055f, 0.055f, 1.0f};
 const eui::Color kSidebar{0.075f, 0.075f, 0.075f, 1.0f};
@@ -39,8 +50,8 @@ const eui::Color kHover{0.135f, 0.135f, 0.135f, 1.0f};
 const eui::Color kPressed{0.18f, 0.18f, 0.18f, 1.0f};
 const eui::Color kBorder{0.17f, 0.17f, 0.17f, 1.0f};
 const eui::Color kText{0.95f, 0.95f, 0.95f, 1.0f};
-const eui::Color kMuted{0.61f, 0.61f, 0.61f, 1.0f};
-const eui::Color kFaint{0.40f, 0.40f, 0.40f, 1.0f};
+const eui::Color kMuted{0.72f, 0.72f, 0.72f, 1.0f};
+const eui::Color kFaint{0.54f, 0.54f, 0.54f, 1.0f};
 const eui::Color kGreen{0.063f, 0.64f, 0.50f, 1.0f};
 const eui::Color kWarning{0.86f, 0.66f, 0.24f, 1.0f};
 const eui::Color kError{0.90f, 0.36f, 0.42f, 1.0f};
@@ -174,13 +185,14 @@ void clippedText(
     float height,
     float fontSize,
     const eui::Color color,
-    const int weight = 400) {
+    const int weight = 400,
+    const char* fontFamily = nullptr) {
     ui.stack(id + ".clip")
         .position(x, y)
         .size(std::max(0.0f, width), std::max(0.0f, height))
         .clip()
         .content([&] {
-            ui.text(id)
+            auto text = ui.text(id)
                 .size(std::max(0.0f, width), std::max(0.0f, height))
                 .text(value)
                 .fontSize(fontSize)
@@ -188,8 +200,11 @@ void clippedText(
                 .lineHeight(fontSize + 2.0f)
                 .color(color)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .wrap(false)
-                .build();
+                .wrap(false);
+            if (fontFamily != nullptr) {
+                text.fontFamily(fontFamily);
+            }
+            text.build();
         })
         .build();
 }
@@ -239,7 +254,7 @@ void composeSessionRow(
             .position(24.0f, 5.0f)
             .size(26.0f, height - 10.0f)
             .icon(0xF233)
-            .fontSize(14.0f)
+            .fontSize(15.0f)
             .color(selected ? kText : kMuted)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
@@ -252,7 +267,7 @@ void composeSessionRow(
             5.0f,
             width - 104.0f,
             height - 10.0f,
-            14.0f,
+            15.0f,
             selected ? kText : kMuted,
             selected ? 650 : 500);
         clippedText(
@@ -263,13 +278,13 @@ void composeSessionRow(
             5.0f,
             28.0f,
             height - 10.0f,
-            12.0f,
+            13.0f,
             kFaint);
         return;
     }
 
     ui.rect(rowId + ".status")
-        .position(28.0f, 18.0f)
+        .position(28.0f, 21.0f)
         .size(7.0f, 7.0f)
         .radius(4.0f)
         .color(sessionStateColor(session->state))
@@ -279,10 +294,10 @@ void composeSessionRow(
         rowId + ".title",
         sessionTitle(*session),
         48.0f,
-        7.0f,
+        8.0f,
         width - 76.0f,
-        22.0f,
-        13.5f,
+        24.0f,
+        15.0f,
         selected ? kText : kMuted,
         selected ? 650 : 500);
     clippedText(
@@ -290,17 +305,17 @@ void composeSessionRow(
         rowId + ".subtitle",
         sessionStateText(session->state) + "  " + endpointText(session->remote),
         48.0f,
-        27.0f,
+        32.0f,
         width - 76.0f,
-        18.0f,
-        10.0f,
+        20.0f,
+        11.5f,
         kFaint);
 }
 
 void composeSidebar(eui::Ui& ui, const float width, const float height) {
     WorkbenchState& workbench = state();
-    const float listY = 102.0f;
-    const float footerHeight = 86.0f;
+    const float listY = 112.0f;
+    const float footerHeight = 96.0f;
     const float listHeight = std::max(80.0f, height - listY - footerHeight);
 
     ui.stack("sidebar")
@@ -316,15 +331,15 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
 
             ui.rect("brand.mark")
                 .position(18.0f, 18.0f)
-                .size(34.0f, 34.0f)
+                .size(38.0f, 38.0f)
                 .radius(6.0f)
                 .color(kText)
                 .build();
             ui.text("brand.mark.icon")
                 .position(18.0f, 18.0f)
-                .size(34.0f, 34.0f)
+                .size(38.0f, 38.0f)
                 .icon(0xF120)
-                .fontSize(14.0f)
+                .fontSize(15.0f)
                 .color(kCanvas)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
@@ -332,23 +347,23 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
             clippedText(
                 ui,
                 "brand.title",
-                "MCDev",
-                64.0f,
-                15.0f,
-                width - 78.0f,
-                24.0f,
-                16.0f,
+                width >= 218.0f ? "MCDev Workbench" : "MCDev",
+                68.0f,
+                14.0f,
+                width - 82.0f,
+                28.0f,
+                16.5f,
                 kText,
                 720);
             clippedText(
                 ui,
                 "brand.subtitle",
-                "WORKBENCH",
-                64.0f,
-                37.0f,
-                width - 78.0f,
-                18.0f,
-                9.0f,
+                "LOG CONSOLE",
+                68.0f,
+                42.0f,
+                width - 82.0f,
+                20.0f,
+                10.5f,
                 kFaint,
                 650);
 
@@ -357,10 +372,10 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
                 "sessions.label",
                 "SESSIONS",
                 20.0f,
-                76.0f,
+                86.0f,
                 width - 40.0f,
-                18.0f,
-                10.0f,
+                20.0f,
+                11.5f,
                 kFaint,
                 650);
 
@@ -368,9 +383,9 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
                 .position(0.0f, listY)
                 .size(width, listHeight)
                 .itemCount(static_cast<std::int64_t>(workbench.backend.sessions().size() + 1))
-                .rowHeight(54.0f)
+                .rowHeight(60.0f)
                 .bind(workbench.sessionScroll)
-                .step(54.0f)
+                .step(60.0f)
                 .overscanViewports(0.5f)
                 .scrollbarWidth(4.0f)
                 .scrollbarGap(3.0f)
@@ -397,10 +412,10 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
                 "backend.status",
                 running ? "Safaia receiver" : "Receiver unavailable",
                 40.0f,
-                footerY + 15.0f,
+                footerY + 18.0f,
                 width - 58.0f,
-                24.0f,
-                12.5f,
+                26.0f,
+                14.0f,
                 kMuted,
                 600);
             clippedText(
@@ -409,10 +424,10 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
                 running ? endpointText(workbench.backend.localEndpoint())
                         : workbench.backend.startError(),
                 20.0f,
-                footerY + 43.0f,
+                footerY + 52.0f,
                 width - 38.0f,
-                21.0f,
-                11.0f,
+                23.0f,
+                12.5f,
                 kFaint);
         })
         .build();
@@ -425,9 +440,20 @@ void composeLogCell(
     const float x,
     const float width,
     const eui::Color color,
-    const float fontSize = 11.5f,
+    const float fontSize = 13.5f,
     const int weight = 450) {
-    clippedText(ui, id, value, x, 0.0f, width, kLogRowHeight, fontSize, color, weight);
+    clippedText(
+        ui,
+        id,
+        value,
+        x,
+        0.0f,
+        width,
+        kLogRowHeight,
+        fontSize,
+        color,
+        weight,
+        "monospace");
 }
 
 void composeLogRow(
@@ -445,10 +471,8 @@ void composeLogRow(
         return;
     }
     const mcdev::LogLine& line = workbench.backend.logs()[indices[static_cast<std::size_t>(visibleIndex)]];
-    const float timeWidth = 102.0f;
-    const float levelWidth = 76.0f;
-    const float sourceWidth = width >= 760.0f ? 134.0f : 104.0f;
-    const float messageX = 22.0f + timeWidth + levelWidth + sourceWidth;
+    const float sourceWidth = width >= 760.0f ? 142.0f : 112.0f;
+    const float messageX = kLogLeft + kTimeColumnWidth + kLevelColumnWidth + sourceWidth;
 
     eui::Color background = visibleIndex % 2 == 0 ? kCanvas : kBand;
     if (line.level == MCDevLink::LogLevel::warning) {
@@ -464,24 +488,31 @@ void composeLogRow(
         .color({kBorder.r, kBorder.g, kBorder.b, 0.55f})
         .build();
 
-    composeLogCell(ui, rowId + ".time", line.timestamp, 22.0f, timeWidth - 8.0f, kFaint, 10.5f);
+    composeLogCell(
+        ui,
+        rowId + ".time",
+        line.timestamp,
+        kLogLeft,
+        kTimeColumnWidth - 8.0f,
+        kFaint,
+        12.0f);
     composeLogCell(
         ui,
         rowId + ".level",
         levelText(line.level),
-        22.0f + timeWidth,
-        levelWidth - 8.0f,
+        kLogLeft + kTimeColumnWidth,
+        kLevelColumnWidth - 8.0f,
         levelColor(line.level),
-        10.0f,
+        12.0f,
         700);
     composeLogCell(
         ui,
         rowId + ".source",
         line.source,
-        22.0f + timeWidth + levelWidth,
+        kLogLeft + kTimeColumnWidth + kLevelColumnWidth,
         sourceWidth - 12.0f,
         kMuted,
-        11.0f,
+        12.5f,
         550);
     composeLogCell(
         ui,
@@ -490,7 +521,7 @@ void composeLogRow(
         messageX,
         std::max(0.0f, width - messageX - 18.0f),
         kText,
-        11.5f);
+        13.5f);
 }
 
 void composeEmptyState(
@@ -513,37 +544,37 @@ void composeEmptyState(
 
     const float centerY = std::max(60.0f, height * 0.42f);
     ui.rect("empty.icon.background")
-        .position((width - 42.0f) * 0.5f, centerY - 50.0f)
-        .size(42.0f, 42.0f)
+        .position((width - 48.0f) * 0.5f, centerY - 56.0f)
+        .size(48.0f, 48.0f)
         .radius(6.0f)
         .color(kRaised)
         .border(1.0f, kBorder)
         .build();
     ui.text("empty.icon")
-        .position((width - 42.0f) * 0.5f, centerY - 50.0f)
-        .size(42.0f, 42.0f)
+        .position((width - 48.0f) * 0.5f, centerY - 56.0f)
+        .size(48.0f, 48.0f)
         .icon(0xF120)
-        .fontSize(15.0f)
+        .fontSize(17.0f)
         .color(kMuted)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
         .build();
     ui.text("empty.title")
         .position(30.0f, centerY + 6.0f)
-        .size(std::max(0.0f, width - 60.0f), 28.0f)
+        .size(std::max(0.0f, width - 60.0f), 32.0f)
         .text(title)
-        .fontSize(15.0f)
+        .fontSize(17.0f)
         .fontWeight(650)
         .color(kText)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
         .build();
     ui.text("empty.subtitle")
-        .position(50.0f, centerY + 36.0f)
-        .size(std::max(0.0f, width - 100.0f), 24.0f)
+        .position(50.0f, centerY + 40.0f)
+        .size(std::max(0.0f, width - 100.0f), 28.0f)
         .text(subtitle)
-        .fontSize(11.5f)
-        .color(kFaint)
+        .fontSize(13.0f)
+        .color(kMuted)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
         .build();
@@ -572,8 +603,8 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
     const float listHeight = std::max(0.0f, height - listY - kFooterHeight);
     const float searchWidth = std::clamp(width * 0.31f, 205.0f, 340.0f);
     const float segmentWidth = std::clamp(width * 0.27f, 205.0f, 250.0f);
-    const float clearX = width - 64.0f;
-    const float followX = clearX - 116.0f;
+    const float clearX = width - 68.0f;
+    const float followX = clearX - 124.0f;
 
     ui.stack("main")
         .size(width, height)
@@ -590,13 +621,13 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 .size(width, 1.0f)
                 .color(kBorder)
                 .build();
-            clippedText(ui, "header.title", title, 24.0f, 15.0f, width - 220.0f, 28.0f, 19.0f, kText, 720);
-            clippedText(ui, "header.subtitle", subtitle, 24.0f, 43.0f, width - 220.0f, 20.0f, 11.0f, kFaint);
+            clippedText(ui, "header.title", title, 24.0f, 15.0f, width - 220.0f, 32.0f, 22.0f, kText, 720);
+            clippedText(ui, "header.subtitle", subtitle, 24.0f, 52.0f, width - 220.0f, 22.0f, 13.0f, kMuted);
 
             const bool connected = workbench.backend.readySessionCount() > 0;
             const bool running = workbench.backend.isRunning();
             ui.rect("header.health.dot")
-                .position(width - 151.0f, 31.0f)
+                .position(width - 159.0f, 36.0f)
                 .size(8.0f, 8.0f)
                 .radius(4.0f)
                 .color(connected || running ? kGreen : kError)
@@ -605,11 +636,11 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 ui,
                 "header.health",
                 connected ? "CONNECTED" : (running ? "LISTENING" : "OFFLINE"),
-                width - 133.0f,
-                21.0f,
-                108.0f,
-                28.0f,
-                10.0f,
+                width - 141.0f,
+                24.0f,
+                116.0f,
+                32.0f,
+                11.5f,
                 connected || running ? kMuted : kError,
                 700);
 
@@ -629,14 +660,15 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
             inputStyle.focused = kRaised;
             inputStyle.border = kBorder;
             inputStyle.focusBorder = kMuted;
+            inputStyle.placeholder = kFaint;
             inputStyle.shadow = {};
             inputStyle.radius = 6.0f;
             components::input(ui, "toolbar.search")
-                .position(24.0f, toolbarY + 13.0f)
-                .size(searchWidth, 38.0f)
+                .position(24.0f, toolbarY + 14.0f)
+                .size(searchWidth, 42.0f)
                 .placeholder("Search logs")
-                .fontSize(12.5f)
-                .inset(13.0f)
+                .fontSize(14.0f)
+                .inset(14.0f)
                 .bind(workbench.search)
                 .style(inputStyle)
                 .transition(transition())
@@ -650,13 +682,13 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
             segmentedStyle.selectedText = kCanvas;
             segmentedStyle.border = kBorder;
             ui.stack("toolbar.filters.wrap")
-                .position(36.0f + searchWidth, toolbarY + 13.0f)
-                .size(segmentWidth, 38.0f)
+                .position(36.0f + searchWidth, toolbarY + 14.0f)
+                .size(segmentWidth, 42.0f)
                 .content([&] {
                     components::segmented(ui, "toolbar.filters")
-                        .size(segmentWidth, 38.0f)
+                        .size(segmentWidth, 42.0f)
                         .items({"All", "Warnings", "Errors"})
-                        .fontSize(11.0f)
+                        .fontSize(13.0f)
                         .bind(workbench.filter)
                         .style(segmentedStyle)
                         .transition(transition())
@@ -672,13 +704,13 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
             switchStyle.rowHover = {1.0f, 1.0f, 1.0f, 0.04f};
             switchStyle.rowPressed = {1.0f, 1.0f, 1.0f, 0.08f};
             ui.stack("toolbar.follow.wrap")
-                .position(followX, toolbarY + 13.0f)
-                .size(108.0f, 38.0f)
+                .position(followX, toolbarY + 14.0f)
+                .size(116.0f, 42.0f)
                 .content([&] {
                     components::toggleSwitch(ui, "toolbar.follow")
-                        .size(108.0f, 38.0f)
-                        .trackSize(34.0f, 19.0f)
-                        .fontSize(11.5f)
+                        .size(116.0f, 42.0f)
+                        .trackSize(36.0f, 20.0f)
+                        .fontSize(13.0f)
                         .text("Follow")
                         .bind(workbench.follow)
                         .style(switchStyle)
@@ -697,11 +729,11 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
             clearStyle.shadow = {};
             clearStyle.radius = 6.0f;
             components::button(ui, "toolbar.clear")
-                .position(clearX, toolbarY + 13.0f)
-                .size(40.0f, 38.0f)
+                .position(clearX, toolbarY + 14.0f)
+                .size(44.0f, 42.0f)
                 .text("")
                 .icon(0xF1F8)
-                .iconSize(13.0f)
+                .iconSize(15.0f)
                 .style(clearStyle)
                 .transition(transition())
                 .onClick([] {
@@ -712,7 +744,7 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
             components::tooltip(ui, "toolbar.clear.tooltip")
                 .source("toolbar.clear.bg")
                 .value("Clear logs")
-                .anchor(clearX + 20.0f, toolbarY + 12.0f)
+                .anchor(clearX + 22.0f, toolbarY + 13.0f)
                 .bounds(width, height)
                 .theme(theme())
                 .build();
@@ -727,11 +759,11 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 .size(width, 1.0f)
                 .color(kBorder)
                 .build();
-            const float sourceWidth = width >= 760.0f ? 134.0f : 104.0f;
-            clippedText(ui, "columns.time", "TIME", 22.0f, columnsY, 94.0f, kColumnHeaderHeight, 9.5f, kFaint, 700);
-            clippedText(ui, "columns.level", "LEVEL", 124.0f, columnsY, 68.0f, kColumnHeaderHeight, 9.5f, kFaint, 700);
-            clippedText(ui, "columns.source", "SOURCE", 200.0f, columnsY, sourceWidth - 12.0f, kColumnHeaderHeight, 9.5f, kFaint, 700);
-            clippedText(ui, "columns.message", "MESSAGE", 200.0f + sourceWidth, columnsY, width - 218.0f - sourceWidth, kColumnHeaderHeight, 9.5f, kFaint, 700);
+            const float sourceWidth = width >= 760.0f ? 142.0f : 112.0f;
+            clippedText(ui, "columns.time", "TIME", kLogLeft, columnsY, kTimeColumnWidth - 8.0f, kColumnHeaderHeight, 11.0f, kMuted, 700);
+            clippedText(ui, "columns.level", "LEVEL", kLogLeft + kTimeColumnWidth, columnsY, kLevelColumnWidth - 8.0f, kColumnHeaderHeight, 11.0f, kMuted, 700);
+            clippedText(ui, "columns.source", "SOURCE", kLogLeft + kTimeColumnWidth + kLevelColumnWidth, columnsY, sourceWidth - 12.0f, kColumnHeaderHeight, 11.0f, kMuted, 700);
+            clippedText(ui, "columns.message", "MESSAGE", kLogLeft + kTimeColumnWidth + kLevelColumnWidth + sourceWidth, columnsY, width - kLogLeft - kTimeColumnWidth - kLevelColumnWidth - sourceWidth - 18.0f, kColumnHeaderHeight, 11.0f, kMuted, 700);
 
             if (visible.empty()) {
                 const bool filtered = !workbench.search.get().empty() || workbench.filter.get() != 0;
@@ -782,8 +814,8 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 footerY,
                 150.0f,
                 kFooterHeight,
-                10.0f,
-                kFaint,
+                11.5f,
+                kMuted,
                 650);
             clippedText(
                 ui,
@@ -795,7 +827,7 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 footerY,
                 std::max(0.0f, width - 200.0f),
                 kFooterHeight,
-                10.0f,
+                11.5f,
                 kFaint);
         })
         .build();
@@ -821,10 +853,10 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         })
         .build();
 
-    ui.stack("backend.ticker")
+    ui.stack("backend.poll.timer")
         .size(1.0f, 1.0f)
         .ignoreLayout()
-        .onFrame([](float) { state().backend.poll(); })
+        .onTimer(0.05f, [] { state().backend.poll(); })
         .build();
 }
 

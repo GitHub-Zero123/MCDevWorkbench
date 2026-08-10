@@ -4,6 +4,9 @@
 
 #include <dwmapi.h>
 #include <windows.h>
+#include <windowsx.h>
+
+#include <algorithm>
 
 namespace mcdev::platform {
 namespace {
@@ -14,20 +17,82 @@ constexpr LONG kMinimumClientHeight = 620;
 HWND themedWindow = nullptr;
 WNDPROC previousWindowProc = nullptr;
 
+LRESULT cornerResizeHitTest(const HWND window, const LPARAM lParam, const LRESULT fallback) {
+    if (IsZoomed(window) || (GetWindowLongPtrW(window, GWL_STYLE) & WS_THICKFRAME) == 0) {
+        return fallback;
+    }
+
+    RECT bounds{};
+    if (!GetWindowRect(window, &bounds)) {
+        return fallback;
+    }
+
+    const UINT dpi = GetDpiForWindow(window);
+    const int borderX = std::max(
+        GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
+            + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi),
+        MulDiv(6, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI));
+    const int borderY = std::max(
+        GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+            + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi),
+        MulDiv(6, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI));
+    const int cornerX = std::max(borderX * 2, MulDiv(16, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI));
+    const int cornerY = std::max(borderY * 2, MulDiv(16, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI));
+    const int x = GET_X_LPARAM(lParam);
+    const int y = GET_Y_LPARAM(lParam);
+
+    const bool onLeftBorder = x < bounds.left + borderX;
+    const bool onRightBorder = x >= bounds.right - borderX;
+    const bool onTopBorder = y < bounds.top + borderY;
+    const bool onBottomBorder = y >= bounds.bottom - borderY;
+    const bool nearLeft = x < bounds.left + cornerX;
+    const bool nearRight = x >= bounds.right - cornerX;
+    const bool nearTop = y < bounds.top + cornerY;
+    const bool nearBottom = y >= bounds.bottom - cornerY;
+
+    if (nearLeft && nearTop && (onLeftBorder || onTopBorder)) {
+        return HTTOPLEFT;
+    }
+    if (nearRight && nearTop && (onRightBorder || onTopBorder)) {
+        return HTTOPRIGHT;
+    }
+    if (nearLeft && nearBottom && (onLeftBorder || onBottomBorder)) {
+        return HTBOTTOMLEFT;
+    }
+    if (nearRight && nearBottom && (onRightBorder || onBottomBorder)) {
+        return HTBOTTOMRIGHT;
+    }
+    return fallback;
+}
+
 LRESULT CALLBACK workbenchWindowProc(
     const HWND window,
     const UINT message,
     const WPARAM wParam,
     const LPARAM lParam) {
+    const LRESULT result = previousWindowProc != nullptr
+        ? CallWindowProcW(previousWindowProc, window, message, wParam, lParam)
+        : DefWindowProcW(window, message, wParam, lParam);
+    if (message == WM_NCHITTEST) {
+        return cornerResizeHitTest(window, lParam, result);
+    }
     if (message == WM_GETMINMAXINFO) {
         auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
         const UINT dpi = GetDpiForWindow(window);
-        limits->ptMinTrackSize.x = MulDiv(kMinimumClientWidth, static_cast<int>(dpi), 96);
-        limits->ptMinTrackSize.y = MulDiv(kMinimumClientHeight, static_cast<int>(dpi), 96);
+        RECT frame{
+            0,
+            0,
+            MulDiv(kMinimumClientWidth, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI),
+            MulDiv(kMinimumClientHeight, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI),
+        };
+        const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+        const DWORD extendedStyle = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+        if (AdjustWindowRectExForDpi(&frame, style, FALSE, extendedStyle, dpi)) {
+            limits->ptMinTrackSize.x = frame.right - frame.left;
+            limits->ptMinTrackSize.y = frame.bottom - frame.top;
+        }
     }
-    return previousWindowProc != nullptr
-        ? CallWindowProcW(previousWindowProc, window, message, wParam, lParam)
-        : DefWindowProcW(window, message, wParam, lParam);
+    return result;
 }
 
 bool belongsToCurrentProcess(const HWND window) {
@@ -37,6 +102,35 @@ bool belongsToCurrentProcess(const HWND window) {
 }
 
 } // namespace
+
+WindowSize initialWindowSize(const int logicalWidth, const int logicalHeight) {
+    const UINT dpi = GetDpiForSystem();
+    int width = MulDiv(
+        std::max(1, logicalWidth),
+        static_cast<int>(dpi),
+        USER_DEFAULT_SCREEN_DPI);
+    int height = MulDiv(
+        std::max(1, logicalHeight),
+        static_cast<int>(dpi),
+        USER_DEFAULT_SCREEN_DPI);
+
+    RECT workArea{};
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        const int margin = MulDiv(32, static_cast<int>(dpi), USER_DEFAULT_SCREEN_DPI);
+        const int availableWidth =
+            static_cast<int>(workArea.right - workArea.left) - margin * 2;
+        const int availableHeight =
+            static_cast<int>(workArea.bottom - workArea.top) - margin * 2;
+        width = std::min(width, std::max(1, availableWidth));
+        height = std::min(height, std::max(1, availableHeight));
+    }
+    return {width, height};
+}
+
+std::string preferredUiFont() {
+    constexpr const char* path = "C:/Windows/Fonts/segoeui.ttf";
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES ? path : "";
+}
 
 void applyWindowTheme() {
     HWND window = GetActiveWindow();
@@ -89,14 +183,6 @@ void applyWindowTheme() {
             static_cast<DWMWINDOWATTRIBUTE>(kTextColor),
             &text,
             sizeof(text));
-        SetWindowPos(
-            window,
-            nullptr,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 }
 
@@ -105,6 +191,14 @@ void applyWindowTheme() {
 #else
 
 namespace mcdev::platform {
+
+WindowSize initialWindowSize(const int logicalWidth, const int logicalHeight) {
+    return {logicalWidth, logicalHeight};
+}
+
+std::string preferredUiFont() {
+    return {};
+}
 
 void applyWindowTheme() {}
 

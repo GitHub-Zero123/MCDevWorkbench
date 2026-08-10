@@ -14,11 +14,11 @@ namespace app {
 const DslAppConfig& dslAppConfig() {
     static const DslAppConfig config = [] {
         const mcdev::platform::WindowSize size =
-            mcdev::platform::initialWindowSize(1400, 880);
+            mcdev::platform::initialWindowSize(910, 572);
         DslAppConfig result = DslAppConfig{}
             .title("MCDev Workbench")
             .pageId("mcdev_workbench")
-            .clearColor({0.055f, 0.055f, 0.055f, 1.0f})
+            .clearColor({0.129f, 0.129f, 0.129f, 1.0f})
             .windowSize(size.width, size.height)
             .showDebugStatsInTitle(false)
             .fps(60.0)
@@ -42,16 +42,16 @@ constexpr float kHorizontalScrollHeight = 16.0f;
 constexpr float kLogLeft = 22.0f;
 constexpr float kLevelColumnWidth = 60.0f;
 
-const eui::Color kCanvas{0.055f, 0.055f, 0.055f, 1.0f};
-const eui::Color kSidebar{0.075f, 0.075f, 0.075f, 1.0f};
-const eui::Color kBand{0.068f, 0.068f, 0.068f, 1.0f};
-const eui::Color kRaised{0.105f, 0.105f, 0.105f, 1.0f};
-const eui::Color kHover{0.135f, 0.135f, 0.135f, 1.0f};
-const eui::Color kPressed{0.18f, 0.18f, 0.18f, 1.0f};
-const eui::Color kBorder{0.17f, 0.17f, 0.17f, 1.0f};
-const eui::Color kText{0.95f, 0.95f, 0.95f, 1.0f};
-const eui::Color kMuted{0.72f, 0.72f, 0.72f, 1.0f};
-const eui::Color kFaint{0.54f, 0.54f, 0.54f, 1.0f};
+const eui::Color kCanvas{0.129f, 0.129f, 0.129f, 1.0f};
+const eui::Color kSidebar{0.090f, 0.090f, 0.090f, 1.0f};
+const eui::Color kBand{0.122f, 0.122f, 0.122f, 1.0f};
+const eui::Color kRaised{0.184f, 0.184f, 0.184f, 1.0f};
+const eui::Color kHover{0.220f, 0.220f, 0.220f, 1.0f};
+const eui::Color kPressed{0.267f, 0.267f, 0.267f, 1.0f};
+const eui::Color kBorder{0.239f, 0.239f, 0.239f, 1.0f};
+const eui::Color kText{0.925f, 0.925f, 0.925f, 1.0f};
+const eui::Color kMuted{0.706f, 0.706f, 0.706f, 1.0f};
+const eui::Color kFaint{0.557f, 0.557f, 0.557f, 1.0f};
 const eui::Color kGreen{0.063f, 0.64f, 0.50f, 1.0f};
 const eui::Color kWarning{0.86f, 0.66f, 0.24f, 1.0f};
 const eui::Color kError{0.90f, 0.36f, 0.42f, 1.0f};
@@ -488,10 +488,10 @@ void composeLogRow(
 
     eui::Color background = visibleIndex % 2 == 0 ? kCanvas : kBand;
     if (line.level == MCDevLink::LogLevel::warning) {
-        background = {0.12f, 0.105f, 0.065f, 1.0f};
+        background = {0.173f, 0.157f, 0.118f, 1.0f};
     } else if (line.level == MCDevLink::LogLevel::error
                || line.level == MCDevLink::LogLevel::critical) {
-        background = {0.13f, 0.07f, 0.075f, 1.0f};
+        background = {0.176f, 0.122f, 0.133f, 1.0f};
     }
     ui.rect(rowId + ".background").size(width, height).color(background).build();
     ui.rect(rowId + ".border")
@@ -957,7 +957,8 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
 void compose(eui::Ui& ui, const eui::Screen& screen) {
     mcdev::platform::applyWindowTheme();
     WorkbenchState& workbench = state();
-    (void)workbench.backend.start();
+    (void)workbench.backend.start([] { app::requestUpdate(); });
+    workbench.backend.drainPendingEvents();
 
     const float sidebarWidth = screen.width >= 1020.0f
         ? 252.0f
@@ -972,11 +973,6 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         })
         .build();
 
-    ui.stack("backend.poll.timer")
-        .size(1.0f, 1.0f)
-        .ignoreLayout()
-        .onTimer(0.05f, [] { state().backend.poll(); })
-        .build();
 }
 
 } // namespace app

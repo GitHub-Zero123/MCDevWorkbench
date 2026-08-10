@@ -11,6 +11,7 @@ namespace {
 constexpr std::size_t kMaximumLogLines = 50000;
 constexpr std::size_t kLogTrimBatch = 5000;
 constexpr std::size_t kMaximumRetainedSessions = 256;
+constexpr auto kBackendPollInterval = std::chrono::milliseconds{100};
 
 bool containsIgnoreCase(std::string_view value, std::string_view needle) {
     if (needle.empty()) {
@@ -79,39 +80,62 @@ bool matchesFilter(const MCDevLink::LogLevel level, const LogFilter filter) {
 
 BackendController::BackendController()
     : service_(runtime_) {
-    service_.setLogHandler([this](const MCDevLink::LogEvent& event) { consumeLog(event); });
+    service_.setLogHandler([this](const MCDevLink::LogEvent& event) {
+        enqueueEvent(event);
+    });
     service_.setSessionHandler([this](const MCDevLink::SessionEvent& event) {
-        consumeSession(event);
+        enqueueEvent(event);
     });
     service_.setDiagnosticHandler([this](const MCDevLink::DiagnosticEvent& event) {
-        consumeDiagnostic(event);
+        enqueueEvent(event);
     });
 }
 
 BackendController::~BackendController() {
+    if (pollThread_.joinable()) {
+        pollThread_.request_stop();
+        pollThread_.join();
+    }
+    requestUiUpdate_ = {};
     service_.stop();
+    running_.store(false, std::memory_order_release);
 }
 
-bool BackendController::start() {
+bool BackendController::start(std::function<void()> requestUiUpdate) {
     if (startAttempted_) {
-        return service_.isRunning();
+        return running_.load(std::memory_order_acquire);
     }
     startAttempted_ = true;
+    requestUiUpdate_ = std::move(requestUiUpdate);
     if (const std::error_code error = service_.start()) {
         startError_ = error.category().name() + std::string(": ") + error.message();
         ++revision_;
         return false;
     }
     localEndpoint_ = service_.localEndpoint();
+    running_.store(true, std::memory_order_release);
+    pollThread_ = std::jthread([this](const std::stop_token stopToken) {
+        runPollLoop(stopToken);
+    });
     ++revision_;
     return true;
 }
 
-void BackendController::poll() {
-    if (!service_.isRunning()) {
-        return;
+void BackendController::drainPendingEvents() {
+    std::vector<PendingEvent> pending;
+    {
+        const std::scoped_lock lock(pendingEventsMutex_);
+        pending.swap(pendingEvents_);
     }
-    (void)runtime_.poll({256, std::chrono::microseconds{1000}});
+    for (const PendingEvent& event : pending) {
+        if (const auto* log = std::get_if<MCDevLink::LogEvent>(&event)) {
+            consumeLog(*log);
+        } else if (const auto* session = std::get_if<MCDevLink::SessionEvent>(&event)) {
+            consumeSession(*session);
+        } else if (const auto* diagnostic = std::get_if<MCDevLink::DiagnosticEvent>(&event)) {
+            consumeDiagnostic(*diagnostic);
+        }
+    }
 }
 
 void BackendController::clearLogs() {
@@ -125,7 +149,7 @@ void BackendController::clearLogs() {
 }
 
 bool BackendController::isRunning() const noexcept {
-    return service_.isRunning();
+    return running_.load(std::memory_order_acquire);
 }
 
 const std::string& BackendController::startError() const noexcept {
@@ -264,6 +288,36 @@ void BackendController::consumeDiagnostic(const MCDevLink::DiagnosticEvent& even
     }
     lastDiagnostic_ = std::string(prefix) + ": " + event.message;
     ++revision_;
+}
+
+void BackendController::enqueueEvent(PendingEvent event) {
+    bool requestUpdate = false;
+    {
+        const std::scoped_lock lock(pendingEventsMutex_);
+        requestUpdate = pendingEvents_.empty();
+        pendingEvents_.push_back(std::move(event));
+    }
+    if (requestUpdate && requestUiUpdate_) {
+        requestUiUpdate_();
+    }
+}
+
+void BackendController::runPollLoop(const std::stop_token stopToken) {
+    while (!stopToken.stop_requested()) {
+        const MCDevLink::PollResult result =
+            runtime_.poll({256, std::chrono::microseconds{1000}});
+        if (!service_.isRunning()) {
+            const bool wasRunning = running_.exchange(false, std::memory_order_acq_rel);
+            if (wasRunning && requestUiUpdate_) {
+                requestUiUpdate_();
+            }
+            break;
+        }
+        if (result.eventLimitReached || result.timeLimitReached) {
+            continue;
+        }
+        std::this_thread::sleep_for(kBackendPollInterval);
+    }
 }
 
 void BackendController::flushPartial(const MCDevLink::SessionId sessionId) {

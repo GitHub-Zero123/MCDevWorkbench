@@ -4,12 +4,17 @@
 #include <MCDevLink/Protocol/Safaia.hpp>
 #include <MCDevLink/Runtime.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace mcdev {
@@ -43,8 +48,8 @@ public:
     BackendController(const BackendController&) = delete;
     BackendController& operator=(const BackendController&) = delete;
 
-    bool start();
-    void poll();
+    bool start(std::function<void()> requestUiUpdate = {});
+    void drainPendingEvents();
     void clearLogs();
 
     [[nodiscard]] bool isRunning() const noexcept;
@@ -64,6 +69,11 @@ public:
         std::optional<MCDevLink::SessionId> session);
 
 private:
+    using PendingEvent = std::variant<
+        MCDevLink::LogEvent,
+        MCDevLink::SessionEvent,
+        MCDevLink::DiagnosticEvent>;
+
     struct PartialLine {
         std::string residual;
         MCDevLink::LogLevel level = MCDevLink::LogLevel::unknown;
@@ -80,6 +90,8 @@ private:
     void consumeLog(const MCDevLink::LogEvent& event);
     void consumeSession(const MCDevLink::SessionEvent& event);
     void consumeDiagnostic(const MCDevLink::DiagnosticEvent& event);
+    void enqueueEvent(PendingEvent event);
+    void runPollLoop(std::stop_token stopToken);
     void flushPartial(MCDevLink::SessionId sessionId);
     void appendLine(MCDevLink::SessionId sessionId, PartialLine& partial, std::string line);
     void trimLogsIfNeeded();
@@ -87,6 +99,7 @@ private:
     MCDevLink::Runtime runtime_;
     MCDevLink::Protocol::SafaiaService service_;
     bool startAttempted_ = false;
+    std::atomic_bool running_{false};
     std::string startError_;
     std::string lastDiagnostic_;
     MCDevLink::Endpoint localEndpoint_;
@@ -96,6 +109,10 @@ private:
     std::size_t maximumMessageBytes_ = 0;
     std::size_t revision_ = 0;
     FilterCache filterCache_;
+    std::function<void()> requestUiUpdate_;
+    std::mutex pendingEventsMutex_;
+    std::vector<PendingEvent> pendingEvents_;
+    std::jthread pollThread_;
 };
 
 } // namespace mcdev

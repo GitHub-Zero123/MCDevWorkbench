@@ -11,8 +11,8 @@
 namespace mcdev::platform {
 namespace {
 
-constexpr LONG kMinimumClientWidth = 880;
-constexpr LONG kMinimumClientHeight = 620;
+constexpr LONG kMinimumClientWidth = 860;
+constexpr LONG kMinimumClientHeight = 520;
 
 HWND themedWindow = nullptr;
 WNDPROC previousWindowProc = nullptr;
@@ -156,18 +156,25 @@ void applyWindowTheme() {
         }
 
         constexpr DWORD kUseImmersiveDarkMode = 20;
+        constexpr DWORD kWindowCornerPreference = 33;
         constexpr DWORD kBorderColor = 34;
         constexpr DWORD kCaptionColor = 35;
         constexpr DWORD kTextColor = 36;
         const BOOL darkMode = TRUE;
-        const COLORREF border = RGB(42, 42, 42);
-        const COLORREF caption = RGB(14, 14, 14);
-        const COLORREF text = RGB(245, 245, 245);
+        const DWORD roundCorners = 2;
+        const COLORREF border = RGB(61, 61, 61);
+        const COLORREF caption = RGB(33, 33, 33);
+        const COLORREF text = RGB(236, 236, 236);
         (void)DwmSetWindowAttribute(
             window,
             static_cast<DWMWINDOWATTRIBUTE>(kUseImmersiveDarkMode),
             &darkMode,
             sizeof(darkMode));
+        (void)DwmSetWindowAttribute(
+            window,
+            static_cast<DWMWINDOWATTRIBUTE>(kWindowCornerPreference),
+            &roundCorners,
+            sizeof(roundCorners));
         (void)DwmSetWindowAttribute(
             window,
             static_cast<DWMWINDOWATTRIBUTE>(kBorderColor),

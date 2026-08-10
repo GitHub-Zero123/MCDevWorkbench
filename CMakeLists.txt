@@ -7,6 +7,10 @@ project(
     LANGUAGES CXX
 )
 
+if(WIN32)
+    enable_language(RC)
+endif()
+
 option(MCDEVLINK_BUILD_TESTS "Build MCDevLink unit tests" OFF)
 option(MCDEVLINK_BUILD_EXAMPLES "Build MCDevLink examples and manual MC probes" OFF)
 
@@ -80,15 +84,30 @@ if(MCDEVWORKBENCH_BUILD_GUI)
 
     # EUI-NEO v0.5.6 defines these values only in its subdirectory scope, but
     # eui_neo_configure_app() resolves them in the caller's scope. Recreate the
-    # integration inputs here so the framework main() and runtime assets are
-    # actually added to this parent-owned executable.
+    # integration inputs here so the framework main() and application resource
+    # are actually added to this parent-owned executable.
     if(EUI_WINDOW_BACKEND STREQUAL "sdl2")
         set(EUI_APP_MAIN_SOURCE "${EUI_SOURCE_DIR}/core/app/sdl2_app_main.cpp")
     else()
-        set(EUI_APP_MAIN_SOURCE "${EUI_SOURCE_DIR}/core/app/glfw_app_main.cpp")
+        set(EUI_APP_MAIN_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/EuiGlfwAppMain.cpp")
     endif()
-    set(EUI_APP_ASSETS_DIR "${EUI_SOURCE_DIR}/assets")
     set(APP_ICON_RESOURCE "")
+    if(WIN32)
+        set(MCDEVWORKBENCH_ICON_ICO "${CMAKE_CURRENT_SOURCE_DIR}/assets/MCDevWorkbench.ico")
+        if(NOT EXISTS "${MCDEVWORKBENCH_ICON_ICO}")
+            message(FATAL_ERROR "MCDevWorkbench icon is missing: ${MCDEVWORKBENCH_ICON_ICO}")
+        endif()
+        set(MCDEVWORKBENCH_ICON_RC "${CMAKE_CURRENT_BINARY_DIR}/mcdev_workbench_icon.rc")
+        file(TO_NATIVE_PATH "${MCDEVWORKBENCH_ICON_ICO}" MCDEVWORKBENCH_ICON_ICO_NATIVE)
+        string(REPLACE "\\" "\\\\" MCDEVWORKBENCH_ICON_ICO_ESCAPED "${MCDEVWORKBENCH_ICON_ICO_NATIVE}")
+        file(WRITE "${MCDEVWORKBENCH_ICON_RC}"
+            "GLFW_ICON ICON \"${MCDEVWORKBENCH_ICON_ICO_ESCAPED}\"\n")
+        set(APP_ICON_RESOURCE "${MCDEVWORKBENCH_ICON_RC}")
+    endif()
+
+    # This app uses system fonts and code-drawn UI only. The window icon above
+    # is compiled into the executable, so no runtime assets directory is needed.
+    set(EUI_APP_ASSETS_DIR "")
     eui_neo_configure_app(MCDevWorkbench)
 
     if(MSVC)

@@ -112,6 +112,8 @@ private:
     std::function<void()> requestUiUpdate_;
     std::mutex pendingEventsMutex_;
     std::vector<PendingEvent> pendingEvents_;
+    std::size_t pendingLogBytes_ = 0;
+    std::size_t droppedPendingLogEvents_ = 0;
     std::jthread pollThread_;
 };
 

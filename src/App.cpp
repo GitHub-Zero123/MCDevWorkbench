@@ -41,6 +41,10 @@ constexpr float kLogRowHeight = 40.0f;
 constexpr float kHorizontalScrollHeight = 16.0f;
 constexpr float kLogLeft = 22.0f;
 constexpr float kLevelColumnWidth = 60.0f;
+constexpr float kSidebarMinimumWidth = 188.0f;
+constexpr float kSidebarMaximumWidth = 320.0f;
+constexpr float kMainMinimumWidth = 640.0f;
+constexpr float kSplitterHitWidth = 8.0f;
 
 const eui::Color kCanvas{0.129f, 0.129f, 0.129f, 1.0f};
 const eui::Color kSidebar{0.090f, 0.090f, 0.090f, 1.0f};
@@ -53,8 +57,11 @@ const eui::Color kText{0.925f, 0.925f, 0.925f, 1.0f};
 const eui::Color kMuted{0.706f, 0.706f, 0.706f, 1.0f};
 const eui::Color kFaint{0.557f, 0.557f, 0.557f, 1.0f};
 const eui::Color kGreen{0.063f, 0.64f, 0.50f, 1.0f};
+const eui::Color kStatusGreen{0.180f, 0.820f, 0.600f, 1.0f};
+const eui::Color kDebug{0.42f, 0.72f, 0.78f, 1.0f};
 const eui::Color kWarning{0.86f, 0.66f, 0.24f, 1.0f};
 const eui::Color kError{0.90f, 0.36f, 0.42f, 1.0f};
+const eui::Color kCritical{1.0f, 0.32f, 0.40f, 1.0f};
 
 struct WorkbenchState {
     mcdev::BackendController backend;
@@ -66,6 +73,9 @@ struct WorkbenchState {
     eui::Signal<float> sessionScroll{0.0f};
     float horizontalDragStart = 0.0f;
     float horizontalDragTravelPixels = 0.0f;
+    float sidebarWidth = 0.0f;
+    float sidebarDragStart = 0.0f;
+    float sidebarDragLogicalPerPixel = 1.0f;
     std::optional<MCDevLink::SessionId> selectedSession;
 };
 
@@ -151,21 +161,82 @@ std::string levelText(const MCDevLink::LogLevel value) {
     return "LOG";
 }
 
-eui::Color levelColor(const MCDevLink::LogLevel value) {
-    switch (value) {
-        case MCDevLink::LogLevel::warning:
-            return kWarning;
-        case MCDevLink::LogLevel::error:
-        case MCDevLink::LogLevel::critical:
-            return kError;
-        case MCDevLink::LogLevel::debug:
-        case MCDevLink::LogLevel::trace:
-            return kFaint;
-        case MCDevLink::LogLevel::info:
-        case MCDevLink::LogLevel::unknown:
-            return kMuted;
+eui::Color withAlpha(const eui::Color color, const float alpha) {
+    return {color.r, color.g, color.b, alpha};
+}
+
+struct LogVisualStyle {
+    eui::Color background;
+    eui::Color level;
+    eui::Color message;
+    int levelWeight = 650;
+    int messageWeight = 450;
+};
+
+LogVisualStyle logVisualStyle(const mcdev::LogLine& line, const bool alternateRow) {
+    LogVisualStyle style{
+        alternateRow ? kBand : kCanvas,
+        kMuted,
+        kText,
+    };
+
+    if (line.message.find("[INFO][Developer]") != std::string::npos) {
+        style.level = withAlpha(kFaint, 0.52f);
+        style.message = withAlpha(kFaint, 0.48f);
+        style.levelWeight = 500;
+        style.messageWeight = 400;
+        return style;
     }
-    return kMuted;
+    if (line.message.find("SUC") != std::string::npos) {
+        style.background = {0.118f, 0.165f, 0.145f, 1.0f};
+        style.level = withAlpha(kGreen, 0.92f);
+        style.message = withAlpha(kText, 0.92f);
+        return style;
+    }
+
+    switch (line.level) {
+        case MCDevLink::LogLevel::trace:
+            style.level = withAlpha(kFaint, 0.52f);
+            style.message = withAlpha(kFaint, 0.52f);
+            style.levelWeight = 500;
+            style.messageWeight = 400;
+            break;
+        case MCDevLink::LogLevel::debug:
+            style.background = alternateRow
+                ? eui::Color{0.122f, 0.145f, 0.149f, 1.0f}
+                : eui::Color{0.129f, 0.151f, 0.157f, 1.0f};
+            style.level = withAlpha(kDebug, 0.82f);
+            style.message = withAlpha(kMuted, 0.76f);
+            style.levelWeight = 600;
+            break;
+        case MCDevLink::LogLevel::info:
+            style.level = withAlpha(kMuted, 0.88f);
+            style.message = withAlpha(kText, 0.94f);
+            break;
+        case MCDevLink::LogLevel::warning:
+            style.background = {0.173f, 0.157f, 0.118f, 1.0f};
+            style.level = kWarning;
+            break;
+        case MCDevLink::LogLevel::error:
+            style.background = {0.176f, 0.122f, 0.133f, 1.0f};
+            style.level = kError;
+            style.levelWeight = 700;
+            break;
+        case MCDevLink::LogLevel::critical:
+            style.background = {0.204f, 0.106f, 0.122f, 1.0f};
+            style.level = kCritical;
+            style.message = kText;
+            style.levelWeight = 750;
+            style.messageWeight = 550;
+            break;
+        case MCDevLink::LogLevel::unknown:
+            style.level = withAlpha(kFaint, 0.62f);
+            style.message = withAlpha(kMuted, 0.62f);
+            style.levelWeight = 500;
+            style.messageWeight = 400;
+            break;
+    }
+    return style;
 }
 
 mcdev::LogFilter selectedFilter(const int value) {
@@ -212,6 +283,56 @@ void clippedText(
         .build();
 }
 
+void composeTerminalGlyph(
+    eui::Ui& ui,
+    const std::string& id,
+    const float x,
+    const float y,
+    const float size,
+    const eui::Color color) {
+    const float scale = size / 38.0f;
+    const auto block = [&](const char* suffix, float left, float top, float width, float height) {
+        ui.rect(id + suffix)
+            .position(x + left * scale, y + top * scale)
+            .size(width * scale, height * scale)
+            .radius(0.8f * scale)
+            .color(color)
+            .build();
+    };
+
+    block(".chevron.0", 10.0f, 9.0f, 4.0f, 4.0f);
+    block(".chevron.1", 13.0f, 12.0f, 4.0f, 4.0f);
+    block(".chevron.2", 16.0f, 15.0f, 4.0f, 4.0f);
+    block(".chevron.3", 16.0f, 18.0f, 4.0f, 4.0f);
+    block(".chevron.4", 13.0f, 21.0f, 4.0f, 4.0f);
+    block(".chevron.5", 10.0f, 24.0f, 4.0f, 4.0f);
+    block(".underscore", 21.0f, 24.0f, 9.0f, 4.0f);
+}
+
+void composeClearGlyph(
+    eui::Ui& ui,
+    const std::string& id,
+    const float x,
+    const float y,
+    const eui::Color color) {
+    const auto stroke = [&](const char* suffix, float left, float top, float width, float height) {
+        ui.rect(id + suffix)
+            .position(x + left, y + top)
+            .size(width, height)
+            .radius(1.0f)
+            .color(color)
+            .build();
+    };
+
+    stroke(".handle", 18.0f, 9.0f, 8.0f, 2.0f);
+    stroke(".lid", 14.0f, 12.0f, 16.0f, 2.0f);
+    stroke(".left", 16.0f, 16.0f, 2.0f, 13.0f);
+    stroke(".right", 26.0f, 16.0f, 2.0f, 13.0f);
+    stroke(".bottom", 16.0f, 28.0f, 12.0f, 2.0f);
+    stroke(".slot.0", 20.0f, 17.0f, 1.5f, 9.0f);
+    stroke(".slot.1", 23.0f, 17.0f, 1.5f, 9.0f);
+}
+
 void composeSessionRow(
     eui::Ui& ui,
     const std::string& rowId,
@@ -253,22 +374,13 @@ void composeSessionRow(
     }
 
     if (allSessions) {
-        ui.text(rowId + ".icon")
-            .position(24.0f, 5.0f)
-            .size(26.0f, height - 10.0f)
-            .icon(0xF233)
-            .fontSize(15.0f)
-            .color(selected ? kText : kMuted)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .build();
         clippedText(
             ui,
             rowId + ".title",
             "All sessions",
-            58.0f,
+            24.0f,
             5.0f,
-            width - 104.0f,
+            width - 80.0f,
             height - 10.0f,
             15.0f,
             selected ? kText : kMuted,
@@ -338,19 +450,11 @@ void composeSidebar(eui::Ui& ui, const float width, const float height) {
                 .radius(6.0f)
                 .color(kText)
                 .build();
-            ui.text("brand.mark.icon")
-                .position(18.0f, 18.0f)
-                .size(38.0f, 38.0f)
-                .icon(0xF120)
-                .fontSize(15.0f)
-                .color(kCanvas)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .build();
+            composeTerminalGlyph(ui, "brand.mark.glyph", 18.0f, 18.0f, 38.0f, kCanvas);
             clippedText(
                 ui,
                 "brand.title",
-                width >= 218.0f ? "MCDev Workbench" : "MCDev",
+                "MCDev Workbench",
                 68.0f,
                 14.0f,
                 width - 82.0f,
@@ -486,14 +590,8 @@ void composeLogRow(
         0.0f,
         std::max(0.0f, messageContentWidth - messageViewportWidth));
 
-    eui::Color background = visibleIndex % 2 == 0 ? kCanvas : kBand;
-    if (line.level == MCDevLink::LogLevel::warning) {
-        background = {0.173f, 0.157f, 0.118f, 1.0f};
-    } else if (line.level == MCDevLink::LogLevel::error
-               || line.level == MCDevLink::LogLevel::critical) {
-        background = {0.176f, 0.122f, 0.133f, 1.0f};
-    }
-    ui.rect(rowId + ".background").size(width, height).color(background).build();
+    const LogVisualStyle visual = logVisualStyle(line, visibleIndex % 2 != 0);
+    ui.rect(rowId + ".background").size(width, height).color(visual.background).build();
     ui.rect(rowId + ".border")
         .position(0.0f, height - 1.0f)
         .size(width, 1.0f)
@@ -506,9 +604,9 @@ void composeLogRow(
         levelText(line.level),
         kLogLeft,
         kLevelColumnWidth - 8.0f,
-        levelColor(line.level),
+        visual.level,
         12.0f,
-        700);
+        visual.levelWeight);
     ui.stack(rowId + ".message.viewport")
         .position(messageX, 0.0f)
         .size(messageViewportWidth, kLogRowHeight)
@@ -523,8 +621,8 @@ void composeLogRow(
                 messageContentWidth,
                 kLogRowHeight,
                 13.5f,
-                kText,
-                450,
+                visual.message,
+                visual.messageWeight,
                 "monospace");
         })
         .build();
@@ -634,15 +732,13 @@ void composeEmptyState(
         .color(kRaised)
         .border(1.0f, kBorder)
         .build();
-    ui.text("empty.icon")
-        .position((width - 48.0f) * 0.5f, centerY - 56.0f)
-        .size(48.0f, 48.0f)
-        .icon(0xF120)
-        .fontSize(17.0f)
-        .color(kMuted)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .build();
+    composeTerminalGlyph(
+        ui,
+        "empty.icon.glyph",
+        (width - 48.0f) * 0.5f,
+        centerY - 56.0f,
+        48.0f,
+        kMuted);
     ui.text("empty.title")
         .position(30.0f, centerY + 6.0f)
         .size(std::max(0.0f, width - 60.0f), 32.0f)
@@ -726,7 +822,7 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 .position(width - 159.0f, 36.0f)
                 .size(8.0f, 8.0f)
                 .radius(4.0f)
-                .color(connected || running ? kGreen : kError)
+                .color(connected || running ? kStatusGreen : kError)
                 .build();
             clippedText(
                 ui,
@@ -828,8 +924,6 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 .position(clearX, toolbarY + 14.0f)
                 .size(44.0f, 42.0f)
                 .text("")
-                .icon(0xF1F8)
-                .iconSize(15.0f)
                 .style(clearStyle)
                 .transition(transition())
                 .onClick([] {
@@ -837,6 +931,12 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                     state().logScroll.set(0.0f);
                 })
                 .build();
+            composeClearGlyph(
+                ui,
+                "toolbar.clear.glyph",
+                clearX,
+                toolbarY + 14.0f,
+                kMuted);
             components::tooltip(ui, "toolbar.clear.tooltip")
                 .source("toolbar.clear.bg")
                 .value("Clear logs")
@@ -889,7 +989,7 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                     })
                     .step(kLogRowHeight * 2.0f)
                     .overscanViewports(0.75f)
-                    .scrollbarWidth(6.0f)
+                    .scrollbarWidth(8.0f)
                     .scrollbarGap(4.0f)
                     .theme(theme())
                     .transition(transition())
@@ -960,16 +1060,60 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     (void)workbench.backend.start([] { app::requestUpdate(); });
     workbench.backend.drainPendingEvents();
 
-    const float sidebarWidth = screen.width >= 1020.0f
+    const float defaultSidebarWidth = screen.width >= 1020.0f
         ? 252.0f
-        : (screen.width >= 900.0f ? 218.0f : 188.0f);
+        : (screen.width >= 900.0f ? 240.0f : 212.0f);
+    const float maximumSidebarWidth = std::max(
+        kSidebarMinimumWidth,
+        std::min(kSidebarMaximumWidth, screen.width - kMainMinimumWidth));
+    if (workbench.sidebarWidth <= 0.0f) {
+        workbench.sidebarWidth = defaultSidebarWidth;
+    }
+    workbench.sidebarWidth = std::clamp(
+        workbench.sidebarWidth,
+        kSidebarMinimumWidth,
+        maximumSidebarWidth);
+    const float sidebarWidth = workbench.sidebarWidth;
     const float mainWidth = std::max(0.0f, screen.width - sidebarWidth);
 
-    ui.row("root")
+    ui.stack("root")
         .size(screen.width, screen.height)
         .content([&] {
-            composeSidebar(ui, sidebarWidth, screen.height);
-            composeMain(ui, mainWidth, screen.height);
+            ui.row("root.layout")
+                .size(screen.width, screen.height)
+                .content([&] {
+                    composeSidebar(ui, sidebarWidth, screen.height);
+                    composeMain(ui, mainWidth, screen.height);
+                })
+                .build();
+
+            ui.rect("root.splitter")
+                .position(sidebarWidth - kSplitterHitWidth * 0.5f, 0.0f)
+                .size(kSplitterHitWidth, screen.height)
+                .states(
+                    {1.0f, 1.0f, 1.0f, 0.0f},
+                    {1.0f, 1.0f, 1.0f, 0.08f},
+                    {1.0f, 1.0f, 1.0f, 0.14f})
+                .instantStates()
+                .onPress([sidebarWidth](
+                             const eui::PointerEvent&,
+                             const eui::Rect& bounds) {
+                    WorkbenchState& current = state();
+                    current.sidebarDragStart = sidebarWidth;
+                    current.sidebarDragLogicalPerPixel = bounds.width > 0.0f
+                        ? kSplitterHitWidth / bounds.width
+                        : 1.0f;
+                })
+                .onDrag([maximumSidebarWidth](const core::dsl::DragEvent& event) {
+                    WorkbenchState& current = state();
+                    current.sidebarWidth = std::clamp(
+                        current.sidebarDragStart
+                            + static_cast<float>(event.totalX)
+                                * current.sidebarDragLogicalPerPixel,
+                        kSidebarMinimumWidth,
+                        maximumSidebarWidth);
+                })
+                .build();
         })
         .build();
 

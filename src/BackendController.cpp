@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <system_error>
 #include <utility>
 
 namespace mcdev {
@@ -11,6 +12,7 @@ namespace {
 constexpr std::size_t kMaximumLogLines = 50000;
 constexpr std::size_t kLogTrimBatch = 5000;
 constexpr std::size_t kMaximumRetainedSessions = 256;
+constexpr std::size_t kMaximumPendingLogBytes = 16 * 1024 * 1024;
 constexpr auto kBackendPollInterval = std::chrono::milliseconds{100};
 
 bool containsIgnoreCase(std::string_view value, std::string_view needle) {
@@ -114,18 +116,29 @@ bool BackendController::start(std::function<void()> requestUiUpdate) {
     }
     localEndpoint_ = service_.localEndpoint();
     running_.store(true, std::memory_order_release);
-    pollThread_ = std::jthread([this](const std::stop_token stopToken) {
-        runPollLoop(stopToken);
-    });
+    try {
+        pollThread_ = std::jthread([this](const std::stop_token stopToken) {
+            runPollLoop(stopToken);
+        });
+    } catch (const std::system_error& error) {
+        running_.store(false, std::memory_order_release);
+        service_.stop();
+        startError_ = std::string("Unable to start backend poll thread: ") + error.what();
+        ++revision_;
+        return false;
+    }
     ++revision_;
     return true;
 }
 
 void BackendController::drainPendingEvents() {
     std::vector<PendingEvent> pending;
+    std::size_t droppedLogEvents = 0;
     {
         const std::scoped_lock lock(pendingEventsMutex_);
         pending.swap(pendingEvents_);
+        pendingLogBytes_ = 0;
+        droppedLogEvents = std::exchange(droppedPendingLogEvents_, 0);
     }
     for (const PendingEvent& event : pending) {
         if (const auto* log = std::get_if<MCDevLink::LogEvent>(&event)) {
@@ -135,6 +148,11 @@ void BackendController::drainPendingEvents() {
         } else if (const auto* diagnostic = std::get_if<MCDevLink::DiagnosticEvent>(&event)) {
             consumeDiagnostic(*diagnostic);
         }
+    }
+    if (droppedLogEvents > 0) {
+        lastDiagnostic_ = "Warning: dropped " + std::to_string(droppedLogEvents)
+            + " pending log events while the UI was unavailable";
+        ++revision_;
     }
 }
 
@@ -294,8 +312,21 @@ void BackendController::enqueueEvent(PendingEvent event) {
     bool requestUpdate = false;
     {
         const std::scoped_lock lock(pendingEventsMutex_);
-        requestUpdate = pendingEvents_.empty();
-        pendingEvents_.push_back(std::move(event));
+        requestUpdate = pendingEvents_.empty() && droppedPendingLogEvents_ == 0;
+        if (const auto* log = std::get_if<MCDevLink::LogEvent>(&event)) {
+            const std::size_t bytes = std::max<std::size_t>(
+                1,
+                log->message.size() + log->source.size());
+            if (bytes > kMaximumPendingLogBytes - std::min(
+                    pendingLogBytes_, kMaximumPendingLogBytes)) {
+                ++droppedPendingLogEvents_;
+            } else {
+                pendingLogBytes_ += bytes;
+                pendingEvents_.push_back(std::move(event));
+            }
+        } else {
+            pendingEvents_.push_back(std::move(event));
+        }
     }
     if (requestUpdate && requestUiUpdate_) {
         requestUiUpdate_();

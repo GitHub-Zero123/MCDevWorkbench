@@ -134,6 +134,19 @@ float getPointerScale(GLFWwindow* window) {
     return (scaleX + scaleY) * 0.5f;
 }
 
+void installMainWindowScrollCallback(GLFWwindow* window) {
+    glfwSetScrollCallback(window, [](GLFWwindow* currentWindow, double xOffset, double yOffset) {
+        const bool shiftPressed =
+            glfwGetKey(currentWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS
+            || glfwGetKey(currentWindow, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+        if (shiftPressed) {
+            core::queueScrollInput(currentWindow, xOffset + yOffset, 0.0);
+            return;
+        }
+        core::queueScrollInput(currentWindow, xOffset, yOffset);
+    });
+}
+
 GLFWmonitor* getWindowMonitor(GLFWwindow* window) {
     if (GLFWmonitor* monitor = glfwGetWindowMonitor(window)) {
         return monitor;
@@ -514,6 +527,7 @@ int main() {
         cleanupMainWindow();
         return -1;
     }
+    installMainWindowScrollCallback(window);
     app::MainWindowRuntime mainWindowRuntime(windowState);
     windowState.initializeTray();
     glfwSetWindowCloseCallback(window, [](GLFWwindow* currentWindow) {

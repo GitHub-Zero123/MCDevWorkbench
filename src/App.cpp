@@ -2,8 +2,10 @@
 #include "platform/WindowTheme.hpp"
 
 #include "eui_neo.h"
+#include "core/window/window_backend.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -76,9 +78,13 @@ struct WorkbenchState {
     eui::Signal<float> sessionScroll{0.0f};
     float horizontalDragStart = 0.0f;
     float horizontalDragTravelPixels = 0.0f;
+    float verticalDragStart = 0.0f;
+    float verticalDragTravelPixels = 0.0f;
     float sidebarWidth = 0.0f;
     float sidebarDragStart = 0.0f;
     float sidebarDragLogicalPerPixel = 1.0f;
+    std::optional<std::size_t> selectedLogIndex;
+    std::string selectedLogMessage;
     std::optional<MCDevLink::SessionId> selectedSession;
 };
 
@@ -638,7 +644,13 @@ void composeLogRow(
     const LogVisualStyle visual = logVisualStyle(line, visibleIndex % 2 != 0);
     const RenderedLogSlice messageSlice =
         sliceLogMessage(line.message, horizontalOffset, messageViewportWidth);
-    ui.rect(rowId + ".background").size(width, height).color(visual.background).build();
+    const std::size_t logIndex = indices[static_cast<std::size_t>(visibleIndex)];
+    const bool selected = workbench.selectedLogIndex == logIndex
+        && workbench.selectedLogMessage == line.message;
+    ui.rect(rowId + ".background")
+        .size(width, height)
+        .color(selected ? withAlpha(kText, 0.075f) : visual.background)
+        .build();
     ui.rect(rowId + ".border")
         .position(0.0f, height - 1.0f)
         .size(width, 1.0f)
@@ -749,6 +761,221 @@ void composeHorizontalScroll(
                         maximumOffset));
                 })
                 .build();
+        })
+        .build();
+}
+
+void setVerticalLogScroll(const float value, const float maximumOffset) {
+    WorkbenchState& workbench = state();
+    const float nextOffset = std::clamp(value, 0.0f, maximumOffset);
+    workbench.logScroll.set(nextOffset);
+    workbench.follow.set(
+        maximumOffset <= 1.0f || nextOffset >= maximumOffset - 1.0f);
+    app::requestUpdate();
+}
+
+void composeVerticalLogScroll(
+    eui::Ui& ui,
+    const float x,
+    const float height,
+    const float maximumOffset,
+    const float viewportHeight,
+    const float contentHeight) {
+    constexpr float scrollbarWidth = 8.0f;
+    const float thumbHeight = std::clamp(
+        height * (viewportHeight / std::max(viewportHeight, contentHeight)),
+        std::min(42.0f, height),
+        height);
+    const float travel = std::max(0.0f, height - thumbHeight);
+    const float offset = std::clamp(state().logScroll.get(), 0.0f, maximumOffset);
+    const float thumbY = maximumOffset > 0.0f ? travel * (offset / maximumOffset) : 0.0f;
+
+    ui.stack("logs.vertical")
+        .position(x, 0.0f)
+        .size(scrollbarWidth, height)
+        .content([&] {
+            ui.rect("logs.vertical.track")
+                .position(1.0f, 0.0f)
+                .size(6.0f, height)
+                .radius(3.0f)
+                .color({1.0f, 1.0f, 1.0f, 0.07f})
+                .onPress([maximumOffset, thumbHeight, height](
+                             const eui::PointerEvent& event,
+                             const eui::Rect& bounds) {
+                    if (maximumOffset <= 0.0f || height <= 0.0f || bounds.height <= 0.0f) {
+                        return;
+                    }
+                    const float localY = static_cast<float>(event.y) - bounds.y;
+                    const float thumbPixels = bounds.height * (thumbHeight / height);
+                    const float travelPixels = std::max(0.0f, bounds.height - thumbPixels);
+                    if (travelPixels <= 0.0f) {
+                        return;
+                    }
+                    const float thumbPosition = std::clamp(
+                        localY - thumbPixels * 0.5f,
+                        0.0f,
+                        travelPixels);
+                    setVerticalLogScroll(
+                        thumbPosition / travelPixels * maximumOffset,
+                        maximumOffset);
+                })
+                .build();
+            ui.rect("logs.vertical.thumb")
+                .position(0.0f, thumbY)
+                .size(scrollbarWidth, thumbHeight)
+                .states(
+                    {1.0f, 1.0f, 1.0f, 0.28f},
+                    {1.0f, 1.0f, 1.0f, 0.42f},
+                    {1.0f, 1.0f, 1.0f, 0.58f})
+                .radius(4.0f)
+                .onPress([thumbHeight, travel](
+                             const eui::PointerEvent&,
+                             const eui::Rect& bounds) {
+                    state().verticalDragStart = state().logScroll.get();
+                    state().verticalDragTravelPixels = thumbHeight > 0.0f
+                        ? travel * (bounds.height / thumbHeight)
+                        : 0.0f;
+                })
+                .onDrag([maximumOffset](const core::dsl::DragEvent& event) {
+                    const float travelPixels = state().verticalDragTravelPixels;
+                    if (maximumOffset <= 0.0f || travelPixels <= 0.0f) {
+                        return;
+                    }
+                    setVerticalLogScroll(
+                        state().verticalDragStart
+                            + static_cast<float>(event.totalY) / travelPixels * maximumOffset,
+                        maximumOffset);
+                })
+                .build();
+        })
+        .build();
+}
+
+void composeLogList(
+    eui::Ui& ui,
+    const float width,
+    const float height,
+    const std::size_t itemCount,
+    const float maximumVerticalOffset,
+    const float maximumHorizontalOffset) {
+    constexpr float scrollbarWidth = 8.0f;
+    constexpr float scrollbarGap = 4.0f;
+    constexpr float overscanViewports = 0.75f;
+    const float contentWidth = std::max(0.0f, width - scrollbarWidth - scrollbarGap);
+    const float totalHeight = static_cast<float>(itemCount) * kLogRowHeight;
+    const float currentOffset = std::clamp(
+        state().logScroll.get(),
+        0.0f,
+        maximumVerticalOffset);
+    const float overscanPixels = height * overscanViewports;
+    const float firstPixel = std::max(0.0f, currentOffset - overscanPixels);
+    const float lastPixel = std::min(
+        totalHeight,
+        currentOffset + height + overscanPixels);
+    const std::size_t firstIndex = std::min(
+        itemCount,
+        static_cast<std::size_t>(firstPixel / kLogRowHeight));
+    const std::size_t lastIndex = std::min(
+        itemCount,
+        static_cast<std::size_t>(std::ceil(lastPixel / kLogRowHeight)) + 1);
+
+    ui.stack("logs.list")
+        .size(width, height)
+        .clip()
+        .focusable()
+        .onPress([currentOffset, height, itemCount](
+                     const eui::PointerEvent& event,
+                     const eui::Rect& bounds) {
+            if (bounds.height <= 0.0f || itemCount == 0) {
+                return;
+            }
+            const float localY = std::clamp(
+                (static_cast<float>(event.y) - bounds.y) * (height / bounds.height),
+                0.0f,
+                std::max(0.0f, height - 0.001f));
+            const float contentY = currentOffset + localY;
+            if (contentY >= static_cast<float>(itemCount) * kLogRowHeight) {
+                return;
+            }
+            const std::size_t visibleIndex = std::min(
+                itemCount - 1,
+                static_cast<std::size_t>(contentY / kLogRowHeight));
+            WorkbenchState& workbench = state();
+            const auto& indices = workbench.backend.filteredLogIndices(
+                workbench.search.get(),
+                selectedFilter(workbench.filter.get()),
+                workbench.selectedSession);
+            if (visibleIndex >= indices.size()) {
+                return;
+            }
+            const std::size_t logIndex = indices[visibleIndex];
+            const auto& logs = workbench.backend.logs();
+            if (logIndex < logs.size()) {
+                workbench.selectedLogIndex = logIndex;
+                workbench.selectedLogMessage = logs[logIndex].message;
+                app::requestUpdate();
+            }
+        })
+        .onTextInput([](const core::KeyboardEvent& event) {
+            if (event.hasShortcut(core::InputKey::C)
+                && !state().selectedLogMessage.empty()) {
+                core::window::setClipboardText(state().selectedLogMessage);
+            }
+        })
+        .onScroll([maximumVerticalOffset, maximumHorizontalOffset](
+                      const core::ScrollEvent& event) {
+            if (std::fabs(event.x) > 0.001 && maximumHorizontalOffset > 0.0f) {
+                WorkbenchState& workbench = state();
+                workbench.horizontalScroll.set(std::clamp(
+                    workbench.horizontalScroll.get()
+                        - static_cast<float>(event.x) * kLogRowHeight * 2.0f,
+                    0.0f,
+                    maximumHorizontalOffset));
+                app::requestUpdate();
+                return;
+            }
+            if (std::fabs(event.y) > 0.001) {
+                setVerticalLogScroll(
+                    state().logScroll.get()
+                        - static_cast<float>(event.y) * kLogRowHeight * 2.0f,
+                    maximumVerticalOffset);
+            }
+        })
+        .cursor(core::CursorShape::Arrow)
+        .content([&] {
+            ui.stack("logs.list.window")
+                .size(contentWidth, height)
+                .content([&] {
+                    std::size_t slot = 0;
+                    for (std::size_t index = firstIndex; index < lastIndex; ++index) {
+                        const std::string rowId =
+                            "logs.list.slot." + std::to_string(slot);
+                        ui.stack(rowId)
+                            .y(static_cast<float>(index) * kLogRowHeight - currentOffset)
+                            .size(contentWidth, kLogRowHeight)
+                            .content([&] {
+                                composeLogRow(
+                                    ui,
+                                    rowId,
+                                    static_cast<std::int64_t>(index),
+                                    contentWidth,
+                                    kLogRowHeight);
+                            })
+                            .build();
+                        ++slot;
+                    }
+                })
+                .build();
+
+            if (maximumVerticalOffset > 0.0f) {
+                composeVerticalLogScroll(
+                    ui,
+                    width - scrollbarWidth,
+                    height,
+                    maximumVerticalOffset,
+                    height,
+                    totalHeight);
+            }
         })
         .build();
 }
@@ -976,6 +1203,8 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                 .onClick([] {
                     state().backend.clearLogs();
                     state().logScroll.set(0.0f);
+                    state().selectedLogIndex.reset();
+                    state().selectedLogMessage.clear();
                 })
                 .build();
             composeClearGlyph(
@@ -1013,34 +1242,24 @@ void composeMain(eui::Ui& ui, const float width, const float height) {
                     .content([&] { composeEmptyState(ui, width, listHeight, filtered); })
                     .build();
             } else {
-                if (workbench.follow.get()) {
-                    const float maximumOffset = std::max(
-                        0.0f,
-                        static_cast<float>(visible.size()) * kLogRowHeight - listHeight);
-                    workbench.logScroll.set(maximumOffset);
-                }
                 const float maximumVerticalOffset = std::max(
                     0.0f,
                     static_cast<float>(visible.size()) * kLogRowHeight - listHeight);
-                components::virtualList(ui, "logs.list")
+                if (workbench.follow.get()) {
+                    workbench.logScroll.set(maximumVerticalOffset);
+                }
+                ui.stack("logs.list.position")
                     .position(0.0f, listY)
                     .size(width, listHeight)
-                    .itemCount(static_cast<std::int64_t>(visible.size()))
-                    .rowHeight(kLogRowHeight)
-                    .offset(workbench.logScroll.get())
-                    .onChange([maximumVerticalOffset](const float value) {
-                        state().logScroll.set(value);
-                        const bool atBottom = maximumVerticalOffset <= 1.0f
-                            || value >= maximumVerticalOffset - 1.0f;
-                        state().follow.set(atBottom);
+                    .content([&] {
+                        composeLogList(
+                            ui,
+                            width,
+                            listHeight,
+                            visible.size(),
+                            maximumVerticalOffset,
+                            maximumHorizontalOffset);
                     })
-                    .step(kLogRowHeight * 2.0f)
-                    .overscanViewports(0.75f)
-                    .scrollbarWidth(8.0f)
-                    .scrollbarGap(4.0f)
-                    .theme(theme())
-                    .transition(transition())
-                    .row(composeLogRow)
                     .build();
             }
 

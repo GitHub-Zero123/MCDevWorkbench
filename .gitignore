@@ -1,0 +1,77 @@
+# CMake out-of-source builds and installs
+/build/
+/install/
+/out/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/CTestTestfile.cmake
+/Testing/
+/compile_commands.json
+/Makefile
+/build.ninja
+/.ninja_deps
+/.ninja_log
+
+# Visual Studio, Visual Studio Code, CLion, and Qt Creator user state
+/.vs/
+/.vscode/
+/.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+CMakeLists.txt.user*
+.qtc_clangd/
+
+# Compiler and linker output outside the configured build directory
+[Dd]ebug/
+[Rr]elease/
+[Rr]elWithDebInfo/
+[Mm]inSizeRel/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+*.a
+*.dylib
+*.dll
+*.exe
+*.exp
+*.ilk
+*.lib
+*.o
+*.obj
+*.pdb
+*.so
+
+# Test, profiler, and diagnostic artifacts
+[Tt]est[Rr]esult*/
+*.coverage
+*.coveragexml
+*.profraw
+*.profdata
+*.binlog
+
+# Local application state and generated logs
+/.mcdev/
+/.cache/
+/logs/
+/reloadFiles/
+/temps/
+*.log
+
+# Local agent/tool state
+/.codex/
+/.roo/
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.tmp
+*~

@@ -4,6 +4,10 @@ MCDevWorkbench 是一个面向 Minecraft 开发与调试流程的桌面日志工
 
 本项目的重点是提供可直接阅读、运行和修改的接入示例，而不是替代 MCDevLink 本身。协议连接、会话和日志事件由 MCDevLink 提供，MCDevWorkbench 负责应用生命周期、线程调度、数据整理和界面呈现。
 
+## 界面预览
+
+![MCDevWorkbench 日志工作站界面](docs/mcdev-workbench-preview.webp)
+
 ## 当前功能
 
 - 启动 MCDevLink Safaia 日志接收服务，并显示监听状态和本地端点。
